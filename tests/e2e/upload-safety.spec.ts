@@ -25,6 +25,17 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   await expect(page.getByRole("button", { name: "DOCX" })).toHaveCount(0);
   await expect(convertButton).toBeDisabled();
 
+  await uploadInput.setInputFiles(fixtures.validPdf);
+  await expect(page.getByText("valid.pdf")).toBeVisible();
+  await page.getByRole("button", { name: "JPG" }).click();
+  await expect(convertButton).toBeEnabled();
+
+  const pdfToImageDownload = page.waitForEvent("download");
+  await convertButton.click();
+  await pdfToImageDownload;
+
+  await expect(page.getByText("Download Ready")).toBeVisible();
+
   await uploadInput.setInputFiles(fixtures.validPng);
   await expect(page.getByText("tiny.png")).toBeVisible();
 
@@ -40,9 +51,9 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   ).toBeVisible();
   await expect(convertButton).toBeEnabled();
 
-  const firstDownload = page.waitForEvent("download");
+  const transparencyDownload = page.waitForEvent("download");
   await convertButton.click();
-  await firstDownload;
+  await transparencyDownload;
 
   await expect(page.getByText("Download Ready")).toBeVisible();
   await expect(page.getByRole("button", { name: "Convert Another File" })).toBeVisible();
@@ -74,9 +85,21 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
     page.getByText("Transparent areas will be replaced with a white background.")
   ).toBeVisible();
 
-  const secondDownload = page.waitForEvent("download");
+  const imageToPdfDownload = page.waitForEvent("download");
   await convertButton.click();
-  await secondDownload;
+  await imageToPdfDownload;
+
+  await expect(page.getByText("Download Ready")).toBeVisible();
+
+  await uploadInput.setInputFiles(fixtures.validJpg);
+  await expect(page.getByText("tiny.jpg")).toBeVisible();
+  await page.getByRole("button", { name: "JPG" }).click();
+  await expect(page.getByText("JPG to JPG re-encodes the image for compression.")).toBeVisible();
+  await expect(page.getByText("0% / Re-encode")).toBeVisible();
+
+  const sameFormatDownload = page.waitForEvent("download");
+  await convertButton.click();
+  await sameFormatDownload;
 
   await expect(page.getByText("Download Ready")).toBeVisible();
 

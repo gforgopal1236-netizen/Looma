@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run test:all",
     "test:unit": "vitest run",
+    "test:policy": "vitest run tests/file-safety.test.ts tests/conversion-policy.test.ts",
+    "test:quality": "vitest run tests/conversion-quality.test.ts",
     "test:browser": "playwright test",
     "test:all": "npm run test:unit && npm run test:browser",
     "postinstall": "mkdir -p public && cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs"
