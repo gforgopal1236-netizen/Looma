@@ -29,17 +29,19 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
 
   await uploadInput.setInputFiles(fixtures.invalidTooWidePng);
 
-  const liveError = page.locator('[role="alert"][aria-live]');
+  const fileSafetyError = page.getByRole("alert").filter({
+    hasText: /For private beta, PNG images must be no wider or taller than 12000px\./
+  });
 
-  await expect(liveError).toBeVisible();
-  await expect(liveError).toContainText("For private beta");
-  await expect(liveError).toContainText("12000px");
+  await expect(fileSafetyError).toBeVisible();
+  await expect(fileSafetyError).toHaveAttribute("aria-live", /polite|assertive/);
+  await expect(fileSafetyError).toContainText("too-wide.png");
   await expect(convertButton).toBeDisabled();
   await expect(page.getByText("Download Ready")).toHaveCount(0);
   await expect(page.getByText("tiny.png")).toHaveCount(0);
 
   await uploadInput.setInputFiles(fixtures.validPng);
-  await expect(liveError).toHaveCount(0);
+  await expect(fileSafetyError).toHaveCount(0);
   await expect(page.getByText("tiny.png")).toBeVisible();
   await expect(convertButton).toBeEnabled();
 
@@ -54,7 +56,7 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   await expect(page.getByText("Drop file here")).toBeVisible();
   await expect(page.getByText("tiny.png")).toHaveCount(0);
   await expect(page.getByText("Download Ready")).toHaveCount(0);
-  await expect(liveError).toHaveCount(0);
+  await expect(fileSafetyError).toHaveCount(0);
   await expect(convertButton).toBeDisabled();
   await expect(page.getByText("0% / None")).toBeVisible();
 
