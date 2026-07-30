@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CONVERSION_WARNING_MESSAGES,
   convertFile,
+  getConversionWarnings,
   getSupportedTargetsForCategory,
   supportsCompression,
   warnsAboutTransparencyReplacement,
@@ -78,5 +80,65 @@ describe("conversion policy", () => {
     expect(warnsAboutTransparencyReplacement("webp", "pdf")).toBe(true);
     expect(warnsAboutTransparencyReplacement("png", "webp")).toBe(false);
     expect(warnsAboutTransparencyReplacement("jpg", "pdf")).toBe(false);
+  });
+
+  it("returns PDF compression warnings only when compression is above 0%", () => {
+    expect(
+      getConversionWarnings({
+        inputKind: "pdf",
+        target: "pdf",
+        compressionLevel: 0
+      })
+    ).not.toContain(CONVERSION_WARNING_MESSAGES.pdfCompressionRasterizes);
+    expect(
+      getConversionWarnings({
+        inputKind: "pdf",
+        target: "pdf",
+        compressionLevel: 50
+      })
+    ).toContain(CONVERSION_WARNING_MESSAGES.pdfCompressionRasterizes);
+  });
+
+  it("returns visual image export warnings for PDF to image outputs", () => {
+    for (const target of ["jpg", "png", "webp"] as const) {
+      expect(
+        getConversionWarnings({
+          inputKind: "pdf",
+          target,
+          compressionLevel: 0
+        })
+      ).toContain(CONVERSION_WARNING_MESSAGES.pdfImageExport);
+    }
+  });
+
+  it("returns transparency warnings for PNG or WEBP to JPG or PDF outputs", () => {
+    for (const inputKind of ["png", "webp"] as const) {
+      for (const target of ["jpg", "pdf"] as const) {
+        expect(
+          getConversionWarnings({
+            inputKind,
+            target,
+            compressionLevel: 0
+          })
+        ).toContain(CONVERSION_WARNING_MESSAGES.transparencyReplaced);
+      }
+    }
+  });
+
+  it("returns same-format re-encode warnings for JPG and WEBP compression paths", () => {
+    expect(
+      getConversionWarnings({
+        inputKind: "jpg",
+        target: "jpg",
+        compressionLevel: 0
+      })
+    ).toContain(CONVERSION_WARNING_MESSAGES.sameFormatReencode);
+    expect(
+      getConversionWarnings({
+        inputKind: "webp",
+        target: "webp",
+        compressionLevel: 90
+      })
+    ).toContain(CONVERSION_WARNING_MESSAGES.sameFormatReencode);
   });
 });

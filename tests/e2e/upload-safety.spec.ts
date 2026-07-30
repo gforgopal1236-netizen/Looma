@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+import {
+  CONVERSION_WARNING_MESSAGES,
+  GENERAL_METADATA_WARNING
+} from "@/lib/conversion-engine";
 import { WORD_CONVERSION_PRIVATE_BETA_MESSAGE } from "@/lib/file-safety";
 
 import { writeBrowserFixtureFiles } from "../fixtures/file-factory";
@@ -11,6 +15,7 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   const uploadInput = page.locator('input[aria-label="Upload files"]');
   const convertButton = page.getByRole("button", { name: /Convert & Download/i });
   const compressionSlider = page.locator('[aria-label="Compression level"]');
+  const compressionThumb = page.getByRole("slider");
 
   await page.goto("/");
 
@@ -19,6 +24,7 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   await expect(
     page.getByText("Convert and compress PDF, JPG, PNG, and WEBP files locally in your browser.")
   ).toBeVisible();
+  await expect(page.getByText(GENERAL_METADATA_WARNING)).toBeVisible();
   await expect(page.getByText("PDF, JPG, PNG, WEBP")).toBeVisible();
   await expect(page.getByText("High-fidelity Word conversion is coming soon.")).toBeVisible();
   await expect(page.getByText("PDF, DOCX, JPG, PNG, WEBP")).toHaveCount(0);
@@ -27,7 +33,24 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
 
   await uploadInput.setInputFiles(fixtures.validPdf);
   await expect(page.getByText("valid.pdf")).toBeVisible();
+  await page.getByRole("button", { name: "PDF" }).click();
+  await expect(
+    page.getByRole("status").filter({
+      hasText: CONVERSION_WARNING_MESSAGES.pdfCompressionRasterizes
+    })
+  ).toHaveCount(0);
+  await compressionThumb.press("ArrowRight");
+  await expect(
+    page.getByRole("status").filter({
+      hasText: CONVERSION_WARNING_MESSAGES.pdfCompressionRasterizes
+    })
+  ).toBeVisible();
   await page.getByRole("button", { name: "JPG" }).click();
+  await expect(
+    page.getByRole("status").filter({
+      hasText: CONVERSION_WARNING_MESSAGES.pdfImageExport
+    })
+  ).toBeVisible();
   await expect(convertButton).toBeEnabled();
 
   const pdfToImageDownload = page.waitForEvent("download");
@@ -47,7 +70,9 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   await page.getByRole("button", { name: "JPG" }).click();
   await expect(compressionSlider).toHaveAttribute("aria-disabled", "false");
   await expect(
-    page.getByText("Transparent areas will be replaced with a white background.")
+    page.getByRole("status").filter({
+      hasText: CONVERSION_WARNING_MESSAGES.transparencyReplaced
+    })
   ).toBeVisible();
   await expect(convertButton).toBeEnabled();
 
@@ -82,7 +107,9 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   await page.getByRole("button", { name: "PDF" }).click();
   await expect(compressionSlider).toHaveAttribute("aria-disabled", "false");
   await expect(
-    page.getByText("Transparent areas will be replaced with a white background.")
+    page.getByRole("status").filter({
+      hasText: CONVERSION_WARNING_MESSAGES.transparencyReplaced
+    })
   ).toBeVisible();
 
   const imageToPdfDownload = page.waitForEvent("download");
@@ -94,7 +121,11 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   await uploadInput.setInputFiles(fixtures.validJpg);
   await expect(page.getByText("tiny.jpg")).toBeVisible();
   await page.getByRole("button", { name: "JPG" }).click();
-  await expect(page.getByText("JPG to JPG re-encodes the image for compression.")).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({
+      hasText: CONVERSION_WARNING_MESSAGES.sameFormatReencode
+    })
+  ).toBeVisible();
   await expect(page.getByText("0% / Re-encode")).toBeVisible();
 
   const sameFormatDownload = page.waitForEvent("download");

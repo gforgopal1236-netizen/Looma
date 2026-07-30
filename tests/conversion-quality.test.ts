@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   convertFile,
+  getConversionWarnings,
   getSupportedTargetsForCategory,
   isSameFormatReencode,
   supportsCompression,
@@ -135,7 +136,7 @@ async function runMatrixCase(
   compressionLevel: number
 ): Promise<MatrixRow> {
   const file = fixtures[matrixCase.fixture];
-  const warningsExpected = getExpectedWarnings(matrixCase);
+  const warningsExpected = getExpectedWarnings(matrixCase, compressionLevel);
   const threshold = getThreshold(matrixCase, compressionLevel);
   const row: MatrixRow = {
     path: matrixCase.path,
@@ -440,24 +441,12 @@ function expandCases(cases: MatrixCase[]) {
   });
 }
 
-function getExpectedWarnings(matrixCase: MatrixCase) {
-  const warnings: string[] = [];
-
-  if (warnsAboutTransparencyReplacement(matrixCase.inputKind, matrixCase.target)) {
-    warnings.push("Transparent areas will be replaced with a white background.");
-  }
-
-  if (isSameFormatReencode(matrixCase.inputKind, matrixCase.target)) {
-    warnings.push("Same-format output is a compression/re-encoding tool.");
-  }
-
-  if (matrixCase.inputKind === "pdf" && matrixCase.target !== "pdf") {
-    warnings.push("PDF output is rasterized and not editable text.");
-  }
-
-  if (matrixCase.inputKind === "pdf" && matrixCase.target === "pdf") {
-    warnings.push("Compressed PDF may rasterize text and vector content.");
-  }
+function getExpectedWarnings(matrixCase: MatrixCase, compressionLevel: number) {
+  const warnings = getConversionWarnings({
+    inputKind: matrixCase.inputKind,
+    target: matrixCase.target,
+    compressionLevel
+  });
 
   if (!supportsCompression(matrixCase.inputKind, matrixCase.target)) {
     warnings.push("Compression slider is unavailable for this path.");

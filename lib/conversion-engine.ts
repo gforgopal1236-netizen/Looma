@@ -86,6 +86,20 @@ const TARGETS: Record<ConversionTarget, TargetOption> = {
   }
 };
 
+export const GENERAL_METADATA_WARNING =
+  "Image metadata and color profiles may not be preserved.";
+
+export const CONVERSION_WARNING_MESSAGES = {
+  pdfCompressionRasterizes:
+    "Compression may rasterize pages, which can reduce text and vector sharpness.",
+  pdfImageExport:
+    "The output is a visual image export and will not contain editable text.",
+  transparencyReplaced:
+    "Transparent areas will be replaced with a white background.",
+  sameFormatReencode:
+    "This re-encodes the file for compression and may reduce quality."
+} as const;
+
 export function getTargetOption(target: ConversionTarget) {
   return TARGETS[target];
 }
@@ -150,6 +164,43 @@ export function isSameFormatReencode(
   target: ConversionTarget
 ) {
   return (inputKind === "jpg" && target === "jpg") || (inputKind === "webp" && target === "webp");
+}
+
+export function getConversionWarnings({
+  inputKind,
+  target,
+  compressionLevel
+}: {
+  inputKind: SupportedInputKind;
+  target: ConversionTarget;
+  compressionLevel: number;
+}) {
+  const warnings: string[] = [];
+
+  if (
+    inputKind === "pdf" &&
+    (target === "pdf" || target === "compressed-pdf") &&
+    compressionLevel > 0
+  ) {
+    warnings.push(CONVERSION_WARNING_MESSAGES.pdfCompressionRasterizes);
+  }
+
+  if (
+    inputKind === "pdf" &&
+    (target === "jpg" || target === "png" || target === "webp")
+  ) {
+    warnings.push(CONVERSION_WARNING_MESSAGES.pdfImageExport);
+  }
+
+  if (warnsAboutTransparencyReplacement(inputKind, target)) {
+    warnings.push(CONVERSION_WARNING_MESSAGES.transparencyReplaced);
+  }
+
+  if (isSameFormatReencode(inputKind, target)) {
+    warnings.push(CONVERSION_WARNING_MESSAGES.sameFormatReencode);
+  }
+
+  return warnings;
 }
 
 export async function convertFile(

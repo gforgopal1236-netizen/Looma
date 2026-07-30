@@ -15,12 +15,13 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import {
+  GENERAL_METADATA_WARNING,
   convertFile,
   formatBytes,
+  getConversionWarnings,
   getSupportedTargetsForCategory,
   isSameFormatReencode,
   supportsCompression,
-  warnsAboutTransparencyReplacement,
   type ConvertedAsset,
   type ConversionProgress,
   type ConversionTarget
@@ -87,8 +88,16 @@ export function Converter() {
   const sameFormatReencode = Boolean(
     fileSafety && target && isSameFormatReencode(fileSafety.input.kind, target)
   );
-  const showTransparencyWarning = Boolean(
-    fileSafety && target && warnsAboutTransparencyReplacement(fileSafety.input.kind, target)
+  const conversionWarnings = React.useMemo(
+    () =>
+      fileSafety && target && supportedTargetValues.has(target)
+        ? getConversionWarnings({
+            inputKind: fileSafety.input.kind,
+            target,
+            compressionLevel
+          })
+        : [],
+    [compressionLevel, fileSafety, supportedTargetValues, target]
   );
 
   const handleFilesAccepted = React.useCallback((files: File[]) => {
@@ -283,6 +292,9 @@ export function Converter() {
         <CardDescription className="mx-auto max-w-md text-sm">
           Convert and compress PDF, JPG, PNG, and WEBP files locally in your browser.
         </CardDescription>
+        <p className="mx-auto max-w-md text-xs text-muted-foreground">
+          {GENERAL_METADATA_WARNING}
+        </p>
       </CardHeader>
 
       <CardContent className="space-y-6 p-5 pt-0 sm:p-8 sm:pt-0">
@@ -323,16 +335,17 @@ export function Converter() {
               {formatMessage}
             </p>
           ) : null}
-          {sameFormatReencode && target ? (
-            <p className="text-xs text-muted-foreground">
-              {getFormatLabel(target)} to {getFormatLabel(target)} re-encodes the image
-              for compression.
-            </p>
-          ) : null}
-          {showTransparencyWarning ? (
-            <p className="text-xs text-amber-700">
-              Transparent areas will be replaced with a white background.
-            </p>
+          {conversionWarnings.length > 0 ? (
+            <div
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className="space-y-1 text-xs text-muted-foreground"
+            >
+              {conversionWarnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
           ) : null}
         </WorkflowStep>
 
