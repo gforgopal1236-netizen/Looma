@@ -121,12 +121,14 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
   await uploadInput.setInputFiles(fixtures.validJpg);
   await expect(page.getByText("tiny.jpg")).toBeVisible();
   await page.getByRole("button", { name: "JPG" }).click();
+  await compressionThumb.press("Home");
+  await expect(compressionThumb).toHaveAttribute("aria-valuenow", "0");
   await expect(
     page.getByRole("status").filter({
       hasText: CONVERSION_WARNING_MESSAGES.sameFormatReencode
     })
   ).toBeVisible();
-  await expect(page.getByText("0% / Re-encode")).toBeVisible();
+  await expect(page.getByText("0% / Re-encode", { exact: true })).toBeVisible();
 
   const sameFormatDownload = page.waitForEvent("download");
   await convertButton.click();
