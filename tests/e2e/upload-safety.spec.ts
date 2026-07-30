@@ -30,7 +30,7 @@ test("rejects unsafe upload, clears stale state, recovers with valid upload, and
 
   await page.getByRole("button", { name: "PNG" }).click();
   await expect(compressionSlider).toHaveAttribute("aria-disabled", "true");
-  await expect(page.getByText("Unavailable")).toBeVisible();
+  await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(page.getByText(/Compression is unavailable for PNG to PNG/)).toBeVisible();
 
   await page.getByRole("button", { name: "JPG" }).click();
