@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useDropzone, type Accept, type FileRejection } from "react-dropzone";
+import { useDropzone, type FileRejection } from "react-dropzone";
 import {
   FileArchive,
   FileImage,
@@ -15,20 +15,9 @@ import { motion } from "framer-motion";
 
 import {
   formatBytes,
-  getFileCategory,
-  validateInputFile
-} from "@/lib/conversion-engine";
+  getFileCategory
+} from "@/lib/file-safety";
 import { cn } from "@/lib/utils";
-
-const ACCEPTED_FILE_TYPES: Accept = {
-  "application/pdf": [".pdf"],
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
-    ".docx"
-  ],
-  "image/jpeg": [".jpg", ".jpeg"],
-  "image/png": [".png"],
-  "image/webp": [".webp"]
-};
 
 interface ConverterDropzoneProps {
   onFilesAccepted: (files: File[]) => void;
@@ -36,6 +25,7 @@ interface ConverterDropzoneProps {
   disabled?: boolean;
   className?: string;
   multiple?: boolean;
+  validationMessage?: string | null;
 }
 
 interface FileVisual {
@@ -49,9 +39,11 @@ export function ConverterDropzone({
   selectedFile = null,
   disabled = false,
   className,
-  multiple = true
+  multiple = true,
+  validationMessage = null
 }: ConverterDropzoneProps) {
   const [message, setMessage] = React.useState<string | null>(null);
+  const displayedMessage = validationMessage ?? message;
 
   const onDrop = React.useCallback(
     (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
@@ -76,23 +68,10 @@ export function ConverterDropzone({
     isDragReject,
     open
   } = useDropzone({
-    accept: ACCEPTED_FILE_TYPES,
     disabled,
     multiple,
     noClick: true,
-    onDrop,
-    validator: (file) => {
-      const validationMessage = validateInputFile(file);
-
-      if (!validationMessage) {
-        return null;
-      }
-
-      return {
-        code: "file-invalid",
-        message: validationMessage
-      };
-    }
+    onDrop
   });
 
   const activeVisual = isDragReject
@@ -165,10 +144,15 @@ export function ConverterDropzone({
         ) : null}
       </div>
 
-      {message ? (
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      {displayedMessage ? (
+        <div
+          role="alert"
+          aria-live="polite"
+          aria-atomic="true"
+          className="mt-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
           <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <p>{message}</p>
+          <p>{displayedMessage}</p>
         </div>
       ) : null}
     </motion.div>

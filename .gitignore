@@ -23,6 +23,8 @@ pnpm-debug.log*
 .turbo/
 .vercel/
 work/
+playwright-report/
+test-results/
 
 # TypeScript
 *.tsbuildinfo

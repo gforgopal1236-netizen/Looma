@@ -1,12 +1,26 @@
-export const SUPPORTED_MIME_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "image/jpeg",
-  "image/png",
-  "image/webp"
-] as const;
+import {
+  assertFileSafetyResultForFile,
+  formatBytes,
+  getFileCategory,
+  type FileCategory,
+  type SuccessfulFileSafetyResult
+} from "@/lib/file-safety";
 
-export type FileCategory = "pdf" | "docx" | "image" | "unknown";
+export {
+  BETA_FILE_SAFETY_LIMITS,
+  formatBytes,
+  getFileCategory,
+  getFileIdentity,
+  isFileSafetyResultForFile,
+  validateFileSafety
+} from "@/lib/file-safety";
+
+export type {
+  FailedFileSafetyResult,
+  FileCategory,
+  FileSafetyResult,
+  SuccessfulFileSafetyResult
+} from "@/lib/file-safety";
 
 export type ConversionTarget =
   | "jpg"
@@ -34,6 +48,7 @@ export interface ConversionProgress {
 export interface ConversionOptions {
   target: ConversionTarget;
   compressionLevel: number;
+  fileSafety: SuccessfulFileSafetyResult;
   onProgress?: (progress: ConversionProgress) => void;
 }
 
@@ -80,34 +95,12 @@ export function getTargetOption(target: ConversionTarget) {
   return TARGETS[target];
 }
 
-export function getFileCategory(file: File): FileCategory {
-  const extension = getExtension(file.name);
-  const mimeType = file.type.toLowerCase();
-
-  if (mimeType === "application/pdf" || extension === "pdf") {
-    return "pdf";
-  }
-
-  if (
-    mimeType ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    extension === "docx"
-  ) {
-    return "docx";
-  }
-
-  if (
-    mimeType.startsWith("image/") &&
-    ["jpg", "jpeg", "png", "webp"].includes(extension)
-  ) {
-    return "image";
-  }
-
-  return "unknown";
+export function getSupportedTargets(file: File): TargetOption[] {
+  return getSupportedTargetsForCategory(getFileCategory(file));
 }
 
-export function getSupportedTargets(file: File): TargetOption[] {
-  switch (getFileCategory(file)) {
+export function getSupportedTargetsForCategory(category: FileCategory): TargetOption[] {
+  switch (category) {
     case "pdf":
       return [TARGETS.pdf, TARGETS.docx, TARGETS.jpg, TARGETS.png, TARGETS.webp];
     case "docx":
@@ -119,37 +112,14 @@ export function getSupportedTargets(file: File): TargetOption[] {
   }
 }
 
-export function validateInputFile(file: File): string | null {
-  if (getFileCategory(file) === "unknown") {
-    return "Supported formats are PDF, DOCX, JPG, PNG, and WEBP.";
-  }
-
-  return null;
-}
-
-export function formatBytes(bytes: number) {
-  if (bytes === 0) {
-    return "0 B";
-  }
-
-  const units = ["B", "KB", "MB", "GB"];
-  const unitIndex = Math.floor(Math.log(bytes) / Math.log(1024));
-  const value = bytes / 1024 ** unitIndex;
-
-  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-}
-
 export async function convertFile(
   file: File,
   options: ConversionOptions
 ): Promise<ConvertedAsset[]> {
-  const validationError = validateInputFile(file);
-
-  if (validationError) {
-    throw new Error(validationError);
-  }
-
-  const supportedTargets = getSupportedTargets(file).map((target) => target.value);
+  const fileSafety = assertFileSafetyResultForFile(file, options.fileSafety);
+  const supportedTargets = getSupportedTargetsForCategory(
+    fileSafety.input.category
+  ).map((target) => target.value);
 
   if (!supportedTargets.includes(options.target)) {
     throw new Error(`The selected output is not available for ${file.name}.`);
@@ -158,7 +128,7 @@ export async function convertFile(
   emit(options, "queued", 1, "Queued...");
 
   try {
-    const category = getFileCategory(file);
+    const category = fileSafety.input.category;
 
     if (category === "pdf" && options.target === "pdf") {
       return [await compressPdf(file, options)];

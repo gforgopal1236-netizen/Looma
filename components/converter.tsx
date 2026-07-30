@@ -17,11 +17,17 @@ import { Slider } from "@/components/ui/slider";
 import {
   convertFile,
   formatBytes,
+  getSupportedTargetsForCategory,
   type ConvertedAsset,
   type ConversionProgress,
   type ConversionTarget
 } from "@/lib/conversion-engine";
 import { downloadConvertedAssets } from "@/lib/download-handler";
+import {
+  isFileSafetyResultForFile,
+  validateFileSafety,
+  type SuccessfulFileSafetyResult
+} from "@/lib/file-safety";
 import { cn } from "@/lib/utils";
 
 type ConverterStatus = "idle" | "processing" | "completed" | "error";
@@ -36,13 +42,34 @@ const FORMAT_OPTIONS: Array<{ value: ConversionTarget; label: string }> = [
 
 export function Converter() {
   const [file, setFile] = React.useState<File | null>(null);
-  const [target, setTarget] = React.useState<ConversionTarget>("pdf");
+  const [target, setTarget] = React.useState<ConversionTarget | null>(null);
   const [compressionLevel, setCompressionLevel] = React.useState(0);
   const [status, setStatus] = React.useState<ConverterStatus>("idle");
   const [progress, setProgress] = React.useState(0);
   const [stageLabel, setStageLabel] = React.useState("Waiting for a file.");
   const [error, setError] = React.useState<string | null>(null);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
+  const [formatMessage, setFormatMessage] = React.useState<string | null>(null);
+  const [fileSafety, setFileSafety] =
+    React.useState<SuccessfulFileSafetyResult | null>(null);
   const [completedAssets, setCompletedAssets] = React.useState<ConvertedAsset[]>([]);
+  const fileValidationRunId = React.useRef(0);
+  const conversionRunId = React.useRef(0);
+
+  const supportedTargets = React.useMemo(
+    () => (fileSafety ? getSupportedTargetsForCategory(fileSafety.input.category) : []),
+    [fileSafety]
+  );
+  const supportedTargetValues = React.useMemo(
+    () => new Set(supportedTargets.map((option) => option.value)),
+    [supportedTargets]
+  );
+  const hasValidatedFile = Boolean(
+    file && fileSafety && isFileSafetyResultForFile(file, fileSafety)
+  );
+  const canConvert = Boolean(
+    hasValidatedFile && target && supportedTargetValues.has(target) && status !== "processing"
+  );
 
   const handleFilesAccepted = React.useCallback((files: File[]) => {
     const selectedFile = files[0];
@@ -51,13 +78,66 @@ export function Converter() {
       return;
     }
 
-    setFile(selectedFile);
+    const validationRunId = fileValidationRunId.current + 1;
+    fileValidationRunId.current = validationRunId;
+    conversionRunId.current += 1;
+    setFile(null);
+    setFileSafety(null);
     setStatus("idle");
     setProgress(0);
-    setStageLabel("Ready.");
+    setStageLabel("Checking file...");
     setError(null);
+    setUploadError(null);
+    setFormatMessage(null);
     setCompletedAssets([]);
-  }, []);
+
+    void validateFileSafety(selectedFile)
+      .then((safetyResult) => {
+        if (fileValidationRunId.current !== validationRunId) {
+          return;
+        }
+
+        if (!safetyResult.ok) {
+          setStatus("error");
+          setProgress(0);
+          setStageLabel("File not accepted.");
+          setError(safetyResult.message);
+          setUploadError(safetyResult.message);
+          return;
+        }
+
+        const nextSupportedTargets = getSupportedTargetsForCategory(
+          safetyResult.input.category
+        ).map((option) => option.value);
+
+        setFile(selectedFile);
+        setFileSafety(safetyResult);
+        setStatus("idle");
+        setStageLabel("Ready.");
+
+        if (target && !nextSupportedTargets.includes(target)) {
+          setFormatMessage(buildUnsupportedFormatMessage(target, nextSupportedTargets));
+          setTarget(nextSupportedTargets[0] ?? null);
+          return;
+        }
+
+        setFormatMessage(null);
+      })
+      .catch(() => {
+        if (fileValidationRunId.current !== validationRunId) {
+          return;
+        }
+
+        const message =
+          "Looma could not verify this file safely. Please try another file.";
+
+        setStatus("error");
+        setProgress(0);
+        setStageLabel("File not accepted.");
+        setError(message);
+        setUploadError(message);
+      });
+  }, [target]);
 
   const handleConvert = React.useCallback(async () => {
     if (status === "processing") {
@@ -72,29 +152,64 @@ export function Converter() {
       return;
     }
 
+    if (
+      !target ||
+      !supportedTargetValues.has(target) ||
+      !fileSafety ||
+      !isFileSafetyResultForFile(file, fileSafety)
+    ) {
+      setStatus("error");
+      setProgress(0);
+      setStageLabel("File needs verification.");
+      setError("Please upload this file again so Looma can verify it before conversion.");
+      setUploadError(null);
+      return;
+    }
+
+    const runId = conversionRunId.current + 1;
+    conversionRunId.current = runId;
+
     setStatus("processing");
     setProgress(3);
     setStageLabel("Parsing...");
     setError(null);
+    setUploadError(null);
     setCompletedAssets([]);
 
     try {
       const assets = await convertFile(file, {
         target,
         compressionLevel,
+        fileSafety,
         onProgress: (nextProgress: ConversionProgress) => {
+          if (conversionRunId.current !== runId) {
+            return;
+          }
+
           setProgress(nextProgress.percent);
           setStageLabel(nextProgress.label);
         }
       });
 
+      if (conversionRunId.current !== runId) {
+        return;
+      }
+
       await downloadConvertedAssets(assets, buildArchiveName(file));
+
+      if (conversionRunId.current !== runId) {
+        return;
+      }
 
       setCompletedAssets(assets);
       setProgress(100);
       setStageLabel("Download Ready");
       setStatus("completed");
     } catch (conversionError) {
+      if (conversionRunId.current !== runId) {
+        return;
+      }
+
       setProgress(100);
       setStageLabel("Conversion failed.");
       setStatus("error");
@@ -104,25 +219,38 @@ export function Converter() {
           : "The browser could not complete this conversion."
       );
     }
-  }, [compressionLevel, file, status, target]);
+  }, [compressionLevel, file, fileSafety, status, supportedTargetValues, target]);
 
   function reset() {
+    fileValidationRunId.current += 1;
+    conversionRunId.current += 1;
     setFile(null);
-    setTarget("pdf");
+    setFileSafety(null);
+    setTarget(null);
     setCompressionLevel(0);
     setStatus("idle");
     setProgress(0);
     setStageLabel("Waiting for a file.");
     setError(null);
+    setUploadError(null);
+    setFormatMessage(null);
     setCompletedAssets([]);
   }
 
   function chooseTarget(nextTarget: ConversionTarget) {
+    conversionRunId.current += 1;
     setTarget(nextTarget);
-    setStatus("idle");
-    setProgress(0);
+    if (!uploadError) {
+      setStatus("idle");
+      setProgress(0);
+      setError(null);
+    }
     setStageLabel(file ? "Ready." : "Waiting for a file.");
-    setError(null);
+    setFormatMessage(
+      file && !supportedTargetValues.has(nextTarget)
+        ? buildUnsupportedFormatMessage(nextTarget, Array.from(supportedTargetValues))
+        : null
+    );
     setCompletedAssets([]);
   }
 
@@ -143,6 +271,7 @@ export function Converter() {
             onFilesAccepted={handleFilesAccepted}
             selectedFile={file}
             multiple={false}
+            validationMessage={uploadError}
           />
         </WorkflowStep>
 
@@ -169,6 +298,11 @@ export function Converter() {
               );
             })}
           </div>
+          {formatMessage ? (
+            <p className="text-xs text-destructive">
+              {formatMessage}
+            </p>
+          ) : null}
         </WorkflowStep>
 
         <WorkflowStep number={3} title="COMPRESS FILE">
@@ -202,6 +336,7 @@ export function Converter() {
             type="button"
             size="lg"
             onClick={handleConvert}
+            disabled={!canConvert}
             className="h-12 w-full text-base"
           >
             {status === "processing" ? (
@@ -242,15 +377,15 @@ export function Converter() {
               <button
                 type="button"
                 onClick={reset}
-                className="mt-3 inline-flex items-center gap-2 text-sm font-semibold underline underline-offset-4"
+                className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-md border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-900 transition-colors hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                Reset / Convert Another File
+                Convert Another File
               </button>
             </div>
           ) : null}
 
-          {status === "error" && error ? (
+          {status === "error" && error && !uploadError ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
               {error}
             </div>
@@ -287,4 +422,18 @@ function WorkflowStep({
 
 function buildArchiveName(file: File) {
   return `${file.name.replace(/\.[^/.]+$/, "") || "converted"}-converted.zip`;
+}
+
+function buildUnsupportedFormatMessage(
+  target: ConversionTarget,
+  supportedTargets: ConversionTarget[]
+) {
+  const requestedFormat = getFormatLabel(target);
+  const supportedFormats = supportedTargets.map(getFormatLabel).join(", ");
+
+  return `${requestedFormat} output is not available for this file type. Please choose ${supportedFormats}.`;
+}
+
+function getFormatLabel(target: ConversionTarget) {
+  return FORMAT_OPTIONS.find((option) => option.value === target)?.label ?? target.toUpperCase();
 }

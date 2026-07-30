@@ -1,0 +1,67 @@
+import { expect, test } from "@playwright/test";
+
+import { writeBrowserFixtureFiles } from "../fixtures/file-factory";
+
+test("rejects unsafe upload, clears stale state, recovers with valid upload, and resets", async ({
+  page
+}, testInfo) => {
+  const fixtures = await writeBrowserFixtureFiles(testInfo.outputPath("fixtures"));
+  const uploadInput = page.locator('input[aria-label="Upload files"]');
+  const convertButton = page.getByRole("button", { name: /Convert & Download/i });
+
+  await page.goto("/");
+
+  await expect(page.getByText("Drop file here")).toBeVisible();
+  await expect(convertButton).toBeDisabled();
+
+  await uploadInput.setInputFiles(fixtures.validPng);
+  await expect(page.getByText("tiny.png")).toBeVisible();
+
+  await page.getByRole("button", { name: "PNG" }).click();
+  await expect(convertButton).toBeEnabled();
+
+  const firstDownload = page.waitForEvent("download");
+  await convertButton.click();
+  await firstDownload;
+
+  await expect(page.getByText("Download Ready")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Convert Another File" })).toBeVisible();
+
+  await uploadInput.setInputFiles(fixtures.invalidTooWidePng);
+
+  const liveError = page.locator('[role="alert"][aria-live]');
+
+  await expect(liveError).toBeVisible();
+  await expect(liveError).toContainText("For private beta");
+  await expect(liveError).toContainText("12000px");
+  await expect(convertButton).toBeDisabled();
+  await expect(page.getByText("Download Ready")).toHaveCount(0);
+  await expect(page.getByText("tiny.png")).toHaveCount(0);
+
+  await uploadInput.setInputFiles(fixtures.validPng);
+  await expect(liveError).toHaveCount(0);
+  await expect(page.getByText("tiny.png")).toBeVisible();
+  await expect(convertButton).toBeEnabled();
+
+  const secondDownload = page.waitForEvent("download");
+  await convertButton.click();
+  await secondDownload;
+
+  await expect(page.getByText("Download Ready")).toBeVisible();
+
+  await page.getByRole("button", { name: "Convert Another File" }).click();
+
+  await expect(page.getByText("Drop file here")).toBeVisible();
+  await expect(page.getByText("tiny.png")).toHaveCount(0);
+  await expect(page.getByText("Download Ready")).toHaveCount(0);
+  await expect(liveError).toHaveCount(0);
+  await expect(convertButton).toBeDisabled();
+  await expect(page.getByText("0% / None")).toBeVisible();
+
+  for (const format of ["PDF", "DOCX", "JPG", "PNG", "WEBP"]) {
+    await expect(page.getByRole("button", { name: format })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+  }
+});
