@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACCEPTED_FILE_TYPES,
   BETA_FILE_SAFETY_LIMITS,
   FILE_SAFETY_ERROR_CODES,
+  WORD_CONVERSION_PRIVATE_BETA_MESSAGE,
+  getFileIdentity,
   isFileSafetyResultForFile,
+  type SuccessfulFileSafetyResult,
   validateFileSafety
 } from "@/lib/file-safety";
+import { convertFile } from "@/lib/conversion-engine";
 
 import {
   createTestFile,
@@ -14,7 +19,6 @@ import {
   makeDocxFile,
   makeEncryptedPdfFile,
   makeInvalidDocxPackageFile,
-  makeOversizedDocxFile,
   makePdfFile,
   makePngWithDimensions,
   makeTinyJpgFile,
@@ -72,49 +76,67 @@ describe("validateFileSafety", () => {
     }
   });
 
-  it("accepts a structurally valid DOCX package", async () => {
-    const result = await validateFileSafety(await makeDocxFile());
-
-    expect(result.ok).toBe(true);
-
-    if (result.ok) {
-      expect(result.input.category).toBe("docx");
-      expect(result.input.kind).toBe("docx");
-      expect(result.docx?.entryCount).toBeGreaterThan(0);
-    }
+  it("does not advertise DOCX as a supported private-beta input", () => {
+    expect(Object.values(ACCEPTED_FILE_TYPES).flat()).not.toContain(".docx");
   });
 
-  it("rejects oversized DOCX files before ZIP parsing", async () => {
-    const result = await validateFileSafety(makeOversizedDocxFile());
+  it("rejects a structurally valid DOCX package with the honest private-beta message", async () => {
+    const result = await validateFileSafety(await makeDocxFile());
 
     expect(result.ok).toBe(false);
 
     if (!result.ok) {
-      expect(result.code).toBe(FILE_SAFETY_ERROR_CODES.FILE_TOO_LARGE);
-      expect(result.message).toContain("DOCX files must be");
+      expect(result.code).toBe(FILE_SAFETY_ERROR_CODES.WORD_CONVERSION_UNAVAILABLE);
+      expect(result.message).toBe(WORD_CONVERSION_PRIVATE_BETA_MESSAGE);
     }
   });
 
-  it("rejects DOCX packages missing required document structure", async () => {
+  it("rejects invalid DOCX-looking files with the same private-beta message", async () => {
     const result = await validateFileSafety(await makeInvalidDocxPackageFile());
 
     expect(result.ok).toBe(false);
 
     if (!result.ok) {
-      expect(result.code).toBe(FILE_SAFETY_ERROR_CODES.INVALID_DOCX_PACKAGE);
-      expect(result.message).toContain("required DOCX document structure");
+      expect(result.code).toBe(FILE_SAFETY_ERROR_CODES.WORD_CONVERSION_UNAVAILABLE);
+      expect(result.message).toBe(WORD_CONVERSION_PRIVATE_BETA_MESSAGE);
     }
   });
 
-  it("rejects an ordinary ZIP renamed as DOCX", async () => {
+  it("rejects an ordinary ZIP renamed as DOCX with the same private-beta message", async () => {
     const result = await validateFileSafety(await makeZipRenamedAsDocxFile());
 
     expect(result.ok).toBe(false);
 
     if (!result.ok) {
-      expect(result.code).toBe(FILE_SAFETY_ERROR_CODES.INVALID_DOCX_PACKAGE);
-      expect(result.message).toContain("required DOCX document structure");
+      expect(result.code).toBe(FILE_SAFETY_ERROR_CODES.WORD_CONVERSION_UNAVAILABLE);
+      expect(result.message).toBe(WORD_CONVERSION_PRIVATE_BETA_MESSAGE);
     }
+  });
+
+  it("does not start DOCX input conversion even if called with stale successful DOCX state", async () => {
+    const file = await makeDocxFile();
+    const progress: string[] = [];
+    const staleDocxSafety = {
+      ok: true,
+      file,
+      identity: getFileIdentity(file),
+      input: {
+        kind: "docx",
+        category: "docx",
+        label: "DOCX"
+      },
+      limits: BETA_FILE_SAFETY_LIMITS
+    } as unknown as SuccessfulFileSafetyResult;
+
+    await expect(
+      convertFile(file, {
+        compressionLevel: 0,
+        fileSafety: staleDocxSafety,
+        target: "pdf",
+        onProgress: (nextProgress) => progress.push(nextProgress.label)
+      })
+    ).rejects.toThrow("The selected output is not available");
+    expect(progress).toEqual([]);
   });
 
   it("accepts valid tiny real JPG, PNG, and WEBP image fixtures", async () => {

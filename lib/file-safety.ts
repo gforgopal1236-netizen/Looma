@@ -1,6 +1,8 @@
 export type FileCategory = "pdf" | "docx" | "image" | "unknown";
 
-export type SupportedInputKind = "pdf" | "docx" | "jpg" | "png" | "webp";
+export type SupportedInputKind = "pdf" | "jpg" | "png" | "webp";
+
+type DeclaredInputKind = SupportedInputKind | "docx";
 
 export interface FileIdentity {
   name: string;
@@ -15,7 +17,7 @@ export interface SuccessfulFileSafetyResult {
   identity: FileIdentity;
   input: {
     kind: SupportedInputKind;
-    category: Exclude<FileCategory, "unknown">;
+    category: "pdf" | "image";
     label: string;
   };
   limits: typeof BETA_FILE_SAFETY_LIMITS;
@@ -26,11 +28,6 @@ export interface SuccessfulFileSafetyResult {
     width: number;
     height: number;
     megapixels: number;
-  };
-  docx?: {
-    entryCount: number;
-    mediaBytes: number;
-    uncompressedBytes: number;
   };
 }
 
@@ -46,6 +43,7 @@ export type FileSafetyResult = SuccessfulFileSafetyResult | FailedFileSafetyResu
 
 export const FILE_SAFETY_ERROR_CODES = {
   UNSUPPORTED_FILE_TYPE: "UNSUPPORTED_FILE_TYPE",
+  WORD_CONVERSION_UNAVAILABLE: "WORD_CONVERSION_UNAVAILABLE",
   EMPTY_FILE: "EMPTY_FILE",
   FILE_TOO_LARGE: "FILE_TOO_LARGE",
   INVALID_FILE_SIGNATURE: "INVALID_FILE_SIGNATURE",
@@ -54,10 +52,7 @@ export const FILE_SAFETY_ERROR_CODES = {
   PDF_PAGE_LIMIT: "PDF_PAGE_LIMIT",
   IMAGE_DIMENSIONS_UNREADABLE: "IMAGE_DIMENSIONS_UNREADABLE",
   IMAGE_DIMENSION_LIMIT: "IMAGE_DIMENSION_LIMIT",
-  IMAGE_MEGAPIXEL_LIMIT: "IMAGE_MEGAPIXEL_LIMIT",
-  DOCX_CORRUPT: "DOCX_CORRUPT",
-  INVALID_DOCX_PACKAGE: "INVALID_DOCX_PACKAGE",
-  DOCX_COMPLEXITY_LIMIT: "DOCX_COMPLEXITY_LIMIT"
+  IMAGE_MEGAPIXEL_LIMIT: "IMAGE_MEGAPIXEL_LIMIT"
 } as const;
 
 export type FileSafetyErrorCode =
@@ -73,12 +68,6 @@ export const BETA_FILE_SAFETY_LIMITS = {
     maxPages: 100
     // PDF-to-image and raster compression paths may need lower target-specific
     // page limits after private-beta performance testing.
-  },
-  docx: {
-    maxBytes: 15 * MB,
-    maxEntries: 1200,
-    maxUncompressedBytes: 80 * MB,
-    maxMediaBytes: 60 * MB
   },
   jpg: {
     maxBytes: 20 * MB,
@@ -99,13 +88,13 @@ export const BETA_FILE_SAFETY_LIMITS = {
 
 export const ACCEPTED_FILE_TYPES = {
   "application/pdf": [".pdf"],
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [
-    ".docx"
-  ],
   "image/jpeg": [".jpg", ".jpeg"],
   "image/png": [".png"],
   "image/webp": [".webp"]
 };
+
+export const WORD_CONVERSION_PRIVATE_BETA_MESSAGE =
+  "High-fidelity Word conversion is not available in Looma’s private beta. Please export the document as PDF in Microsoft Word, Google Docs, or LibreOffice, then upload the PDF to Looma.";
 
 export function getFileIdentity(file: File): FileIdentity {
   return {
@@ -191,8 +180,12 @@ export async function validateFileSafety(file: File): Promise<FileSafetyResult> 
     return validateImageSafety(file, identity, signature, header);
   }
 
-  if (signature === "zip" || declaredKind === "docx") {
-    return validateDocxSafety(file, identity, signature);
+  if (declaredKind === "docx") {
+    return fail(
+      file,
+      FILE_SAFETY_ERROR_CODES.WORD_CONVERSION_UNAVAILABLE,
+      WORD_CONVERSION_PRIVATE_BETA_MESSAGE
+    );
   }
 
   if (declaredKind === "pdf") {
@@ -218,7 +211,7 @@ export async function validateFileSafety(file: File): Promise<FileSafetyResult> 
   return fail(
     file,
     FILE_SAFETY_ERROR_CODES.UNSUPPORTED_FILE_TYPE,
-    "Supported formats are PDF, DOCX, JPG, PNG, and WEBP."
+    "Supported formats are PDF, JPG, PNG, and WEBP."
   );
 }
 
@@ -380,110 +373,6 @@ function validateImageSafety(
   };
 }
 
-async function validateDocxSafety(
-  file: File,
-  identity: FileIdentity,
-  signature: FileSignature
-): Promise<FileSafetyResult> {
-  const limits = BETA_FILE_SAFETY_LIMITS.docx;
-
-  if (signature !== "zip") {
-    return fail(
-      file,
-      FILE_SAFETY_ERROR_CODES.INVALID_FILE_SIGNATURE,
-      `${file.name} does not appear to be a valid DOCX file.`
-    );
-  }
-
-  if (file.size > limits.maxBytes) {
-    return fail(
-      file,
-      FILE_SAFETY_ERROR_CODES.FILE_TOO_LARGE,
-      `${file.name} is ${formatBytes(file.size)}. For private beta, DOCX files must be ${formatBytes(
-        limits.maxBytes
-      )} or smaller so Looma can keep your browser responsive.`
-    );
-  }
-
-  try {
-    const JSZip = (await import("jszip")).default;
-    const zip = await JSZip.loadAsync(copyArrayBuffer(await file.arrayBuffer()));
-    const entries = Object.values(zip.files);
-    const fileEntries = entries.filter((entry) => !entry.dir);
-
-    if (!zip.files["[Content_Types].xml"] || !zip.files["word/document.xml"]) {
-      return fail(
-        file,
-        FILE_SAFETY_ERROR_CODES.INVALID_DOCX_PACKAGE,
-        `${file.name} is a ZIP-based file, but it does not contain the required DOCX document structure.`
-      );
-    }
-
-    if (fileEntries.length > limits.maxEntries) {
-      return fail(
-        file,
-        FILE_SAFETY_ERROR_CODES.DOCX_COMPLEXITY_LIMIT,
-        `${file.name} contains ${fileEntries.length} internal files. For private beta, DOCX files must contain ${limits.maxEntries} files or fewer.`
-      );
-    }
-
-    const uncompressedBytes = fileEntries.reduce(
-      (total, entry) => total + getZipEntryUncompressedSize(entry),
-      0
-    );
-    const mediaBytes = fileEntries
-      .filter((entry) => entry.name.startsWith("word/media/"))
-      .reduce((total, entry) => total + getZipEntryUncompressedSize(entry), 0);
-
-    if (uncompressedBytes > limits.maxUncompressedBytes) {
-      return fail(
-        file,
-        FILE_SAFETY_ERROR_CODES.DOCX_COMPLEXITY_LIMIT,
-        `${file.name} expands to about ${formatBytes(
-          uncompressedBytes
-        )} when opened. For private beta, DOCX packages must expand to ${formatBytes(
-          limits.maxUncompressedBytes
-        )} or less.`
-      );
-    }
-
-    if (mediaBytes > limits.maxMediaBytes) {
-      return fail(
-        file,
-        FILE_SAFETY_ERROR_CODES.DOCX_COMPLEXITY_LIMIT,
-        `${file.name} contains about ${formatBytes(
-          mediaBytes
-        )} of embedded media. For private beta, DOCX embedded media must stay under ${formatBytes(
-          limits.maxMediaBytes
-        )}.`
-      );
-    }
-
-    return {
-      ok: true,
-      file,
-      identity,
-      input: {
-        kind: "docx",
-        category: "docx",
-        label: "DOCX"
-      },
-      limits: BETA_FILE_SAFETY_LIMITS,
-      docx: {
-        entryCount: fileEntries.length,
-        mediaBytes,
-        uncompressedBytes
-      }
-    };
-  } catch {
-    return fail(
-      file,
-      FILE_SAFETY_ERROR_CODES.DOCX_CORRUPT,
-      `${file.name} could not be read as a DOCX package. It may be corrupt or incomplete.`
-    );
-  }
-}
-
 type FileSignature = "pdf" | "jpg" | "png" | "webp" | "zip" | null;
 
 function detectFileSignature(bytes: Uint8Array): FileSignature {
@@ -532,7 +421,7 @@ function hasPdfSignature(bytes: Uint8Array) {
 
 function getDeclaredInputKind(
   file: Pick<File, "name" | "type">
-): SupportedInputKind | null {
+): DeclaredInputKind | null {
   const extension = getExtension(file.name);
   const mimeType = file.type.toLowerCase();
 
@@ -686,18 +575,6 @@ function readWebpDimensions(bytes: Uint8Array) {
   return null;
 }
 
-function getZipEntryUncompressedSize(entry: unknown) {
-  const zipEntry = entry as {
-    _data?: {
-      uncompressedSize?: number;
-    };
-  };
-
-  return typeof zipEntry._data?.uncompressedSize === "number"
-    ? zipEntry._data.uncompressedSize
-    : 0;
-}
-
 async function readFileHeader(file: File, bytes: number) {
   const buffer = await file.slice(0, Math.min(file.size, bytes)).arrayBuffer();
 
@@ -746,7 +623,7 @@ function isJpegStartOfFrame(marker: number) {
   );
 }
 
-function getKindLabel(kind: SupportedInputKind) {
+function getKindLabel(kind: DeclaredInputKind) {
   if (kind === "jpg") {
     return "JPG/JPEG";
   }

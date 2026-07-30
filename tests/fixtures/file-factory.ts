@@ -74,17 +74,6 @@ export async function makeZipRenamedAsDocxFile(name = "renamed.docx") {
   return createTestFile(name, docxMimeType, await zip.generateAsync({ type: "uint8array" }));
 }
 
-export function makeOversizedDocxFile(name = "oversized.docx") {
-  const bytes = new Uint8Array(BETA_FILE_SAFETY_LIMITS.docx.maxBytes + 1);
-
-  bytes[0] = 0x50;
-  bytes[1] = 0x4b;
-  bytes[2] = 0x03;
-  bytes[3] = 0x04;
-
-  return createTestFile(name, docxMimeType, bytes);
-}
-
 export function makeTinyJpgFile(name = "tiny.jpg", type = "image/jpeg") {
   return createTestFile(name, type, bytesFromBase64(TINY_IMAGE_BASE64.jpg));
 }
@@ -118,9 +107,13 @@ export async function writeBrowserFixtureFiles(directory: string) {
 
   const files = {
     invalidTooWidePng: path.join(directory, "too-wide.png"),
+    validDocx: path.join(directory, "valid.docx"),
     validPng: path.join(directory, "tiny.png")
   };
 
+  const docx = await makeDocxFile("valid.docx");
+
+  await writeFile(files.validDocx, new Uint8Array(await docx.arrayBuffer()));
   await writeFile(files.validPng, bytesFromBase64(TINY_IMAGE_BASE64.png));
   await writeFile(
     files.invalidTooWidePng,

@@ -104,7 +104,7 @@ export function getSupportedTargetsForCategory(category: FileCategory): TargetOp
     case "pdf":
       return [TARGETS.pdf, TARGETS.docx, TARGETS.jpg, TARGETS.png, TARGETS.webp];
     case "docx":
-      return [TARGETS.pdf, TARGETS.jpg, TARGETS.png, TARGETS.webp];
+      return [];
     case "image":
       return [TARGETS.pdf, TARGETS.jpg, TARGETS.png, TARGETS.webp];
     default:
@@ -142,22 +142,13 @@ export async function convertFile(
     }
 
     if (category === "pdf" && options.target === "docx") {
+      // PDF to DOCX remains available for private beta, but needs a separate
+      // fidelity audit before public launch.
       return [await pdfToDocx(file, options)];
     }
 
     if (category === "pdf" && options.target === "compressed-pdf") {
       return [await compressPdf(file, options)];
-    }
-
-    if (category === "docx" && options.target === "pdf") {
-      return [await docxToPdf(file, options)];
-    }
-
-    if (
-      category === "docx" &&
-      (options.target === "jpg" || options.target === "png" || options.target === "webp")
-    ) {
-      return await docxToImages(file, options.target, options);
     }
 
     if (category === "image" && options.target === "pdf") {
@@ -277,74 +268,6 @@ async function pdfToDocx(
     sourceName: file.name,
     target: "docx"
   };
-}
-
-async function docxToPdf(
-  file: File,
-  options: ConversionOptions
-): Promise<ConvertedAsset> {
-  emit(options, "parsing", 12, "Parsing DOCX...");
-
-  const blocks = await extractDocxBlocks(file);
-
-  emit(options, "converting", 44, "Converting to PDF...");
-
-  const { jsPDF } = await import("jspdf");
-  const pdf = new jsPDF({
-    unit: "pt",
-    format: "a4",
-    compress: true
-  });
-
-  pdf.setProperties({
-    title: stripExtension(file.name),
-    subject: "Client-side DOCX to PDF conversion",
-    creator: "Private File Converter"
-  });
-
-  writeBlocksToJsPdf(pdf, blocks.length > 0 ? blocks : fallbackBlocks(file.name));
-
-  emit(options, "packaging", 88, "Packaging PDF...");
-
-  const blob = pdf.output("blob");
-
-  emit(options, "completed", 100, "Completed.");
-
-  return {
-    blob,
-    filename: `${stripExtension(file.name)}.pdf`,
-    mimeType: "application/pdf",
-    sourceName: file.name,
-    target: "pdf"
-  };
-}
-
-async function docxToImages(
-  file: File,
-  target: "jpg" | "png" | "webp",
-  options: ConversionOptions
-): Promise<ConvertedAsset[]> {
-  emit(options, "parsing", 12, "Parsing DOCX...");
-
-  const blocks = await extractDocxBlocks(file);
-  const pages = await renderBlocksToImageBlobs(
-    blocks.length > 0 ? blocks : fallbackBlocks(file.name),
-    target,
-    options
-  );
-
-  emit(options, "completed", 100, "Completed.");
-
-  return pages.map((blob, index) => ({
-    blob,
-    filename:
-      pages.length === 1
-        ? `${stripExtension(file.name)}.${target}`
-        : `${stripExtension(file.name)}-page-${String(index + 1).padStart(3, "0")}.${target}`,
-    mimeType: getImageMimeType(target),
-    sourceName: file.name,
-    target
-  }));
 }
 
 async function imageToImage(
@@ -540,51 +463,6 @@ async function compressPdf(
   };
 }
 
-async function extractDocxBlocks(file: File): Promise<DocumentTextBlock[]> {
-  const arrayBuffer = await file.arrayBuffer();
-  const mammothModule = await import("mammoth/mammoth.browser");
-  const result = await mammothModule.convertToHtml({ arrayBuffer });
-
-  if (typeof DOMParser === "undefined") {
-    const rawText = result.value.replace(/<[^>]+>/g, "\n");
-    return rawTextToBlocks(rawText);
-  }
-
-  const document = new DOMParser().parseFromString(result.value, "text/html");
-  const nodes = Array.from(document.body.querySelectorAll("h1,h2,h3,p,li"));
-  const blocks = nodes
-    .map((node): DocumentTextBlock | null => {
-      const text = normalizeWhitespace(node.textContent ?? "");
-
-      if (!text) {
-        return null;
-      }
-
-      const tagName = node.tagName.toLowerCase();
-
-      if (tagName === "h1") {
-        return { text, kind: "heading1" };
-      }
-
-      if (tagName === "h2") {
-        return { text, kind: "heading2" };
-      }
-
-      if (tagName === "h3") {
-        return { text, kind: "heading3" };
-      }
-
-      if (tagName === "li") {
-        return { text: `• ${text}`, kind: "list" };
-      }
-
-      return { text, kind: "paragraph" };
-    })
-    .filter((block): block is DocumentTextBlock => block !== null);
-
-  return blocks.length > 0 ? blocks : rawTextToBlocks(result.value);
-}
-
 async function blocksToDocxBlob(blocks: DocumentTextBlock[]): Promise<Blob> {
   const { Document, HeadingLevel, Packer, Paragraph, TextRun } = await import("docx");
 
@@ -633,172 +511,6 @@ async function blocksToDocxBlob(blocks: DocumentTextBlock[]): Promise<Blob> {
   });
 
   return Packer.toBlob(doc);
-}
-
-function writeBlocksToJsPdf(
-  pdf: {
-    internal: { pageSize: { getWidth: () => number; getHeight: () => number } };
-    addPage: () => void;
-    setFont: (fontName: string, fontStyle?: string) => void;
-    setFontSize: (fontSize: number) => void;
-    splitTextToSize: (text: string, maxWidth: number) => string[];
-    text: (text: string, x: number, y: number) => void;
-  },
-  blocks: DocumentTextBlock[]
-) {
-  const marginX = 56;
-  const marginY = 56;
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const maxTextWidth = pageWidth - marginX * 2;
-  let cursorY = marginY;
-
-  blocks.forEach((block) => {
-    const fontSize =
-      block.kind === "heading1"
-        ? 22
-        : block.kind === "heading2"
-          ? 18
-          : block.kind === "heading3"
-            ? 15
-            : 11;
-    const lineHeight = fontSize * 1.35;
-    const before = block.kind.startsWith("heading") ? 12 : 4;
-    const after = block.kind.startsWith("heading") ? 8 : 6;
-
-    pdf.setFont("helvetica", block.kind.startsWith("heading") ? "bold" : "normal");
-    pdf.setFontSize(fontSize);
-
-    const lines = pdf.splitTextToSize(block.text, maxTextWidth);
-
-    if (cursorY + before + lines.length * lineHeight > pageHeight - marginY) {
-      pdf.addPage();
-      cursorY = marginY;
-    }
-
-    cursorY += before;
-
-    lines.forEach((line) => {
-      if (cursorY + lineHeight > pageHeight - marginY) {
-        pdf.addPage();
-        cursorY = marginY;
-      }
-
-      pdf.text(line, marginX, cursorY);
-      cursorY += lineHeight;
-    });
-
-    cursorY += after;
-  });
-}
-
-async function renderBlocksToImageBlobs(
-  blocks: DocumentTextBlock[],
-  target: "jpg" | "png" | "webp",
-  options: ConversionOptions
-): Promise<Blob[]> {
-  const mimeType = getImageMimeType(target);
-  const quality = getRasterQuality(target, options.compressionLevel);
-  const pages = paginateBlocksForCanvas(blocks);
-  const blobs: Blob[] = [];
-
-  for (let index = 0; index < pages.length; index += 1) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1240;
-    canvas.height = 1754;
-
-    const context = canvas.getContext("2d", { alpha: target !== "jpg" });
-
-    if (!context) {
-      throw new Error("Canvas rendering is unavailable in this browser.");
-    }
-
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = "#14171f";
-    context.textBaseline = "top";
-
-    let y = 104;
-
-    pages[index].forEach((block) => {
-      const fontSize =
-        block.kind === "heading1"
-          ? 42
-          : block.kind === "heading2"
-            ? 34
-            : block.kind === "heading3"
-              ? 28
-              : 24;
-      const weight = block.kind.startsWith("heading") ? 700 : 400;
-      const lineHeight = Math.ceil(fontSize * 1.45);
-
-      context.font = `${weight} ${fontSize}px Arial, Helvetica, sans-serif`;
-
-      const lines = wrapCanvasText(context, block.text, 1040);
-      lines.forEach((line) => {
-        context.fillText(line, 100, y);
-        y += lineHeight;
-      });
-      y += block.kind.startsWith("heading") ? 22 : 14;
-    });
-
-    blobs.push(await canvasToBlob(canvas, mimeType, quality));
-    canvas.width = 0;
-    canvas.height = 0;
-
-    emit(
-      options,
-      "converting",
-      16 + Math.round(((index + 1) / pages.length) * 76),
-      `Rendering page ${index + 1} of ${pages.length}...`
-    );
-  }
-
-  return blobs;
-}
-
-function paginateBlocksForCanvas(blocks: DocumentTextBlock[]) {
-  const measurementCanvas = document.createElement("canvas");
-  const context = measurementCanvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Canvas rendering is unavailable in this browser.");
-  }
-
-  const pages: DocumentTextBlock[][] = [[]];
-  let currentHeight = 104;
-  const pageBottom = 1640;
-
-  blocks.forEach((block) => {
-    const fontSize =
-      block.kind === "heading1"
-        ? 42
-        : block.kind === "heading2"
-          ? 34
-          : block.kind === "heading3"
-            ? 28
-            : 24;
-    const weight = block.kind.startsWith("heading") ? 700 : 400;
-    const lineHeight = Math.ceil(fontSize * 1.45);
-
-    context.font = `${weight} ${fontSize}px Arial, Helvetica, sans-serif`;
-    const lines = wrapCanvasText(context, block.text, 1040);
-    const blockHeight =
-      lines.length * lineHeight + (block.kind.startsWith("heading") ? 22 : 14);
-
-    if (currentHeight + blockHeight > pageBottom && pages[pages.length - 1].length > 0) {
-      pages.push([]);
-      currentHeight = 104;
-    }
-
-    pages[pages.length - 1].push(block);
-    currentHeight += blockHeight;
-  });
-
-  measurementCanvas.width = 0;
-  measurementCanvas.height = 0;
-
-  return pages;
 }
 
 async function renderPdfPageToBlob(
@@ -999,74 +711,6 @@ function fallbackBlocks(fileName: string): DocumentTextBlock[] {
       kind: "paragraph"
     }
   ];
-}
-
-function wrapCanvasText(
-  context: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number
-) {
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let currentLine = "";
-
-  words.forEach((word) => {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-
-    if (context.measureText(testLine).width <= maxWidth) {
-      currentLine = testLine;
-      return;
-    }
-
-    if (currentLine) {
-      lines.push(currentLine);
-    }
-
-    if (context.measureText(word).width <= maxWidth) {
-      currentLine = word;
-      return;
-    }
-
-    const splitWord = splitLongWord(context, word, maxWidth);
-    lines.push(...splitWord.slice(0, -1));
-    currentLine = splitWord.at(-1) ?? "";
-  });
-
-  if (currentLine) {
-    lines.push(currentLine);
-  }
-
-  return lines;
-}
-
-function splitLongWord(
-  context: CanvasRenderingContext2D,
-  word: string,
-  maxWidth: number
-) {
-  const pieces: string[] = [];
-  let current = "";
-
-  Array.from(word).forEach((character) => {
-    const test = `${current}${character}`;
-
-    if (context.measureText(test).width <= maxWidth) {
-      current = test;
-      return;
-    }
-
-    if (current) {
-      pieces.push(current);
-    }
-
-    current = character;
-  });
-
-  if (current) {
-    pieces.push(current);
-  }
-
-  return pieces;
 }
 
 function canvasToBlob(

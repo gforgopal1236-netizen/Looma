@@ -113,7 +113,10 @@ export function ConverterDropzone({
               {selectedFile ? "File selected" : "Drop file here"}
             </p>
             <p className="text-sm text-muted-foreground">
-              PDF, DOCX, JPG, PNG, WEBP
+              PDF, JPG, PNG, WEBP
+            </p>
+            <p className="text-xs text-muted-foreground">
+              High-fidelity Word conversion is coming soon.
             </p>
           </div>
 
