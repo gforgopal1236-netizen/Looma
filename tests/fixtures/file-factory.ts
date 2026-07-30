@@ -108,13 +108,15 @@ export async function writeBrowserFixtureFiles(directory: string) {
   const files = {
     invalidTooWidePng: path.join(directory, "too-wide.png"),
     validDocx: path.join(directory, "valid.docx"),
-    validPng: path.join(directory, "tiny.png")
+    validPng: path.join(directory, "tiny.png"),
+    validWebp: path.join(directory, "tiny.webp")
   };
 
   const docx = await makeDocxFile("valid.docx");
 
   await writeFile(files.validDocx, new Uint8Array(await docx.arrayBuffer()));
   await writeFile(files.validPng, bytesFromBase64(TINY_IMAGE_BASE64.png));
+  await writeFile(files.validWebp, bytesFromBase64(TINY_IMAGE_BASE64.webp));
   await writeFile(
     files.invalidTooWidePng,
     makePngDimensionBytes(

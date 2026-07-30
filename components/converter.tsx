@@ -18,6 +18,9 @@ import {
   convertFile,
   formatBytes,
   getSupportedTargetsForCategory,
+  isSameFormatReencode,
+  supportsCompression,
+  warnsAboutTransparencyReplacement,
   type ConvertedAsset,
   type ConversionProgress,
   type ConversionTarget
@@ -34,7 +37,6 @@ type ConverterStatus = "idle" | "processing" | "completed" | "error";
 
 const FORMAT_OPTIONS: Array<{ value: ConversionTarget; label: string }> = [
   { value: "pdf", label: "PDF" },
-  { value: "docx", label: "DOCX" },
   { value: "jpg", label: "JPG" },
   { value: "png", label: "PNG" },
   { value: "webp", label: "WEBP" }
@@ -69,6 +71,24 @@ export function Converter() {
   );
   const canConvert = Boolean(
     hasValidatedFile && target && supportedTargetValues.has(target) && status !== "processing"
+  );
+  const hasSupportedSelectedConversion = Boolean(
+    fileSafety && target && supportedTargetValues.has(target)
+  );
+  const compressionAvailable = Boolean(
+    fileSafety &&
+      target &&
+      supportedTargetValues.has(target) &&
+      supportsCompression(fileSafety.input.kind, target)
+  );
+  const compressionUnavailable = Boolean(
+    hasSupportedSelectedConversion && !compressionAvailable
+  );
+  const sameFormatReencode = Boolean(
+    fileSafety && target && isSameFormatReencode(fileSafety.input.kind, target)
+  );
+  const showTransparencyWarning = Boolean(
+    fileSafety && target && warnsAboutTransparencyReplacement(fileSafety.input.kind, target)
   );
 
   const handleFilesAccepted = React.useCallback((files: File[]) => {
@@ -258,10 +278,10 @@ export function Converter() {
     <Card className="w-full max-w-2xl border bg-card/95 shadow-soft backdrop-blur">
       <CardHeader className="space-y-2 p-6 text-center sm:p-8 sm:pb-5">
         <CardTitle className="text-2xl font-bold tracking-normal sm:text-3xl">
-          Private File Converter
+          Private PDF & Image Converter
         </CardTitle>
         <CardDescription className="mx-auto max-w-md text-sm">
-          Convert one file at a time locally in your browser.
+          Convert and compress PDF, JPG, PNG, and WEBP files locally in your browser.
         </CardDescription>
       </CardHeader>
 
@@ -276,7 +296,7 @@ export function Converter() {
         </WorkflowStep>
 
         <WorkflowStep number={2} title="SELECT FORMAT">
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             {FORMAT_OPTIONS.map((option) => {
               const isActive = target === option.value;
 
@@ -303,6 +323,17 @@ export function Converter() {
               {formatMessage}
             </p>
           ) : null}
+          {sameFormatReencode && target ? (
+            <p className="text-xs text-muted-foreground">
+              {getFormatLabel(target)} to {getFormatLabel(target)} re-encodes the image
+              for compression.
+            </p>
+          ) : null}
+          {showTransparencyWarning ? (
+            <p className="text-xs text-amber-700">
+              Transparent areas will be replaced with a white background.
+            </p>
+          ) : null}
         </WorkflowStep>
 
         <WorkflowStep number={3} title="COMPRESS FILE">
@@ -312,12 +343,18 @@ export function Converter() {
               <span
                 className={cn(
                   "rounded-md px-2 py-1 text-xs font-bold",
-                  compressionLevel === 0
+                  compressionUnavailable
+                    ? "bg-muted text-muted-foreground"
+                    : compressionLevel === 0
                     ? "bg-muted text-muted-foreground"
                     : "bg-secondary text-secondary-foreground"
                 )}
               >
-                {compressionLevel === 0 ? "0% / None" : `${compressionLevel}%`}
+                {getCompressionBadgeLabel({
+                  compressionLevel,
+                  compressionUnavailable,
+                  sameFormatReencode
+                })}
               </span>
             </div>
             <Slider
@@ -326,8 +363,17 @@ export function Converter() {
               max={90}
               step={5}
               onValueChange={([value]) => setCompressionLevel(value)}
+              disabled={compressionUnavailable}
               aria-label="Compression level"
+              aria-disabled={compressionUnavailable}
             />
+            {compressionUnavailable && fileSafety && target ? (
+              <p className="text-xs text-muted-foreground">
+                Compression is unavailable for {fileSafety.input.label} to{" "}
+                {getFormatLabel(target)} because this output does not use a compression
+                setting.
+              </p>
+            ) : null}
           </div>
         </WorkflowStep>
 
@@ -436,4 +482,28 @@ function buildUnsupportedFormatMessage(
 
 function getFormatLabel(target: ConversionTarget) {
   return FORMAT_OPTIONS.find((option) => option.value === target)?.label ?? target.toUpperCase();
+}
+
+function getCompressionBadgeLabel({
+  compressionLevel,
+  compressionUnavailable,
+  sameFormatReencode
+}: {
+  compressionLevel: number;
+  compressionUnavailable: boolean;
+  sameFormatReencode: boolean;
+}) {
+  if (compressionUnavailable) {
+    return "Unavailable";
+  }
+
+  if (compressionLevel === 0 && sameFormatReencode) {
+    return "0% / Re-encode";
+  }
+
+  if (compressionLevel === 0) {
+    return "0% / Standard";
+  }
+
+  return `${compressionLevel}%`;
 }

@@ -3,6 +3,7 @@ import {
   formatBytes,
   getFileCategory,
   type FileCategory,
+  type SupportedInputKind,
   type SuccessfulFileSafetyResult
 } from "@/lib/file-safety";
 
@@ -19,6 +20,7 @@ export type {
   FailedFileSafetyResult,
   FileCategory,
   FileSafetyResult,
+  SupportedInputKind,
   SuccessfulFileSafetyResult
 } from "@/lib/file-safety";
 
@@ -27,7 +29,6 @@ export type ConversionTarget =
   | "png"
   | "webp"
   | "pdf"
-  | "docx"
   | "compressed-image"
   | "compressed-pdf";
 
@@ -68,17 +69,11 @@ export interface TargetOption {
 
 type PdfPageProxy = import("pdfjs-dist").PDFPageProxy;
 
-interface DocumentTextBlock {
-  text: string;
-  kind: "heading1" | "heading2" | "heading3" | "paragraph" | "list";
-}
-
 const TARGETS: Record<ConversionTarget, TargetOption> = {
   jpg: { value: "jpg", label: "JPG images", extension: "jpg" },
   png: { value: "png", label: "PNG images", extension: "png" },
   webp: { value: "webp", label: "WEBP image", extension: "webp" },
   pdf: { value: "pdf", label: "PDF document", extension: "pdf" },
-  docx: { value: "docx", label: "Editable DOCX", extension: "docx" },
   "compressed-image": {
     value: "compressed-image",
     label: "Compressed image",
@@ -102,7 +97,7 @@ export function getSupportedTargets(file: File): TargetOption[] {
 export function getSupportedTargetsForCategory(category: FileCategory): TargetOption[] {
   switch (category) {
     case "pdf":
-      return [TARGETS.pdf, TARGETS.docx, TARGETS.jpg, TARGETS.png, TARGETS.webp];
+      return [TARGETS.pdf, TARGETS.jpg, TARGETS.png, TARGETS.webp];
     case "docx":
       return [];
     case "image":
@@ -110,6 +105,51 @@ export function getSupportedTargetsForCategory(category: FileCategory): TargetOp
     default:
       return [];
   }
+}
+
+export function supportsCompression(
+  inputKind: SupportedInputKind,
+  target: ConversionTarget
+) {
+  if (target === "compressed-pdf") {
+    return inputKind === "pdf";
+  }
+
+  if (target === "compressed-image") {
+    return inputKind === "jpg" || inputKind === "png" || inputKind === "webp";
+  }
+
+  if (inputKind === "pdf") {
+    return target === "pdf" || target === "jpg" || target === "webp";
+  }
+
+  if (inputKind === "jpg") {
+    return target === "pdf" || target === "jpg" || target === "webp";
+  }
+
+  if (inputKind === "png") {
+    return target === "jpg" || target === "webp";
+  }
+
+  if (inputKind === "webp") {
+    return target === "pdf" || target === "jpg" || target === "webp";
+  }
+
+  return false;
+}
+
+export function warnsAboutTransparencyReplacement(
+  inputKind: SupportedInputKind,
+  target: ConversionTarget
+) {
+  return (inputKind === "png" || inputKind === "webp") && (target === "jpg" || target === "pdf");
+}
+
+export function isSameFormatReencode(
+  inputKind: SupportedInputKind,
+  target: ConversionTarget
+) {
+  return (inputKind === "jpg" && target === "jpg") || (inputKind === "webp" && target === "webp");
 }
 
 export async function convertFile(
@@ -125,45 +165,47 @@ export async function convertFile(
     throw new Error(`The selected output is not available for ${file.name}.`);
   }
 
-  emit(options, "queued", 1, "Queued...");
+  const effectiveOptions = supportsCompression(fileSafety.input.kind, options.target)
+    ? options
+    : { ...options, compressionLevel: 0 };
+
+  emit(effectiveOptions, "queued", 1, "Queued...");
 
   try {
     const category = fileSafety.input.category;
 
-    if (category === "pdf" && options.target === "pdf") {
-      return [await compressPdf(file, options)];
+    if (category === "pdf" && effectiveOptions.target === "pdf") {
+      return [await compressPdf(file, effectiveOptions)];
     }
 
     if (
       category === "pdf" &&
-      (options.target === "jpg" || options.target === "png" || options.target === "webp")
+      (effectiveOptions.target === "jpg" ||
+        effectiveOptions.target === "png" ||
+        effectiveOptions.target === "webp")
     ) {
-      return await pdfToImages(file, options.target, options);
+      return await pdfToImages(file, effectiveOptions.target, effectiveOptions);
     }
 
-    if (category === "pdf" && options.target === "docx") {
-      // PDF to DOCX remains available for private beta, but needs a separate
-      // fidelity audit before public launch.
-      return [await pdfToDocx(file, options)];
+    if (category === "pdf" && effectiveOptions.target === "compressed-pdf") {
+      return [await compressPdf(file, effectiveOptions)];
     }
 
-    if (category === "pdf" && options.target === "compressed-pdf") {
-      return [await compressPdf(file, options)];
-    }
-
-    if (category === "image" && options.target === "pdf") {
-      return [await imageToPdf(file, options)];
+    if (category === "image" && effectiveOptions.target === "pdf") {
+      return [await imageToPdf(file, effectiveOptions)];
     }
 
     if (
       category === "image" &&
-      (options.target === "jpg" || options.target === "png" || options.target === "webp")
+      (effectiveOptions.target === "jpg" ||
+        effectiveOptions.target === "png" ||
+        effectiveOptions.target === "webp")
     ) {
-      return [await imageToImage(file, options.target, options)];
+      return [await imageToImage(file, effectiveOptions.target, effectiveOptions)];
     }
 
-    if (category === "image" && options.target === "compressed-image") {
-      return [await compressImage(file, options)];
+    if (category === "image" && effectiveOptions.target === "compressed-image") {
+      return [await compressImage(file, effectiveOptions)];
     }
 
     throw new Error("Unsupported conversion request.");
@@ -223,53 +265,6 @@ async function pdfToImages(
   return assets;
 }
 
-async function pdfToDocx(
-  file: File,
-  options: ConversionOptions
-): Promise<ConvertedAsset> {
-  emit(options, "parsing", 12, "Parsing PDF text...");
-
-  const pdfjs = await loadPdfJs();
-  const sourceBytes = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({ data: sourceBytes.slice(0) }).promise;
-  const blocks: DocumentTextBlock[] = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const pageBlocks = textContentToBlocks(content.items);
-
-    if (pageNumber > 1) {
-      blocks.push({ text: `Page ${pageNumber}`, kind: "heading3" });
-    }
-
-    blocks.push(...pageBlocks);
-
-    emit(
-      options,
-      "converting",
-      16 + Math.round((pageNumber / pdf.numPages) * 58),
-      `Extracting page ${pageNumber} of ${pdf.numPages}...`
-    );
-  }
-
-  await pdf.destroy();
-
-  emit(options, "packaging", 86, "Building DOCX...");
-  const blob = await blocksToDocxBlob(blocks.length > 0 ? blocks : fallbackBlocks(file.name));
-
-  emit(options, "completed", 100, "Completed.");
-
-  return {
-    blob,
-    filename: `${stripExtension(file.name)}.docx`,
-    mimeType:
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    sourceName: file.name,
-    target: "docx"
-  };
-}
-
 async function imageToImage(
   file: File,
   target: "jpg" | "png" | "webp",
@@ -304,9 +299,12 @@ async function imageToPdf(
   emit(options, "parsing", 12, "Loading image...");
 
   const image = await loadImage(file);
-  const imageMimeType = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const imageMimeType =
+    options.fileSafety.input.kind === "png" ? "image/png" : "image/jpeg";
   const quality = clamp(1 - options.compressionLevel / 120, 0.35, 0.94);
-  const dataUrl = await drawImageToDataUrl(image, imageMimeType, quality);
+  const dataUrl = await drawImageToDataUrl(image, imageMimeType, quality, {
+    replaceTransparencyWithWhite: options.fileSafety.input.kind === "png"
+  });
 
   emit(options, "converting", 58, "Converting to PDF...");
 
@@ -463,56 +461,6 @@ async function compressPdf(
   };
 }
 
-async function blocksToDocxBlob(blocks: DocumentTextBlock[]): Promise<Blob> {
-  const { Document, HeadingLevel, Packer, Paragraph, TextRun } = await import("docx");
-
-  const children = blocks.map((block) => {
-    const heading =
-      block.kind === "heading1"
-        ? HeadingLevel.HEADING_1
-        : block.kind === "heading2"
-          ? HeadingLevel.HEADING_2
-          : block.kind === "heading3"
-            ? HeadingLevel.HEADING_3
-            : undefined;
-
-    return new Paragraph({
-      heading,
-      spacing: {
-        after: block.kind.startsWith("heading") ? 180 : 120
-      },
-      children: [
-        new TextRun({
-          text: block.text,
-          bold: block.kind.startsWith("heading"),
-          size:
-            block.kind === "heading1"
-              ? 32
-              : block.kind === "heading2"
-                ? 28
-                : block.kind === "heading3"
-                  ? 24
-                  : 22
-        })
-      ]
-    });
-  });
-
-  const doc = new Document({
-    creator: "Private File Converter",
-    description: "Generated locally in the browser.",
-    title: "Converted document",
-    sections: [
-      {
-        properties: {},
-        children
-      }
-    ]
-  });
-
-  return Packer.toBlob(doc);
-}
-
 async function renderPdfPageToBlob(
   page: PdfPageProxy,
   scale: number,
@@ -582,19 +530,22 @@ async function loadImage(file: File): Promise<{
 async function drawImageToDataUrl(
   source: { image: HTMLImageElement; width: number; height: number },
   mimeType: string,
-  quality: number
+  quality: number,
+  options: { replaceTransparencyWithWhite?: boolean } = {}
 ) {
   const canvas = document.createElement("canvas");
   canvas.width = source.width;
   canvas.height = source.height;
 
-  const context = canvas.getContext("2d", { alpha: mimeType === "image/png" });
+  const context = canvas.getContext("2d", {
+    alpha: mimeType === "image/png" && !options.replaceTransparencyWithWhite
+  });
 
   if (!context) {
     throw new Error("Canvas rendering is unavailable in this browser.");
   }
 
-  if (mimeType === "image/jpeg") {
+  if (mimeType === "image/jpeg" || options.replaceTransparencyWithWhite) {
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
   }
@@ -655,64 +606,6 @@ function getRasterQuality(target: "jpg" | "png" | "webp", compressionLevel: numb
   return clamp(0.94 - compressionLevel / 120, 0.18, 0.94);
 }
 
-function textContentToBlocks(items: unknown[]): DocumentTextBlock[] {
-  const textItems = items
-    .map((item) => item as { str?: string; transform?: number[] })
-    .filter((item) => item.str && item.str.trim().length > 0);
-
-  if (textItems.length === 0) {
-    return [];
-  }
-
-  const rows = new Map<number, { x: number; text: string }[]>();
-
-  textItems.forEach((item) => {
-    const transform = item.transform ?? [0, 0, 0, 0, 0, 0];
-    const y = Math.round(transform[5] ?? 0);
-    const x = transform[4] ?? 0;
-    const text = normalizeWhitespace(item.str ?? "");
-
-    if (!rows.has(y)) {
-      rows.set(y, []);
-    }
-
-    rows.get(y)?.push({ x, text });
-  });
-
-  return Array.from(rows.entries())
-    .sort(([a], [b]) => b - a)
-    .map(([, row]) =>
-      row
-        .sort((a, b) => a.x - b.x)
-        .map((item) => item.text)
-        .join(" ")
-    )
-    .map((text) => normalizeWhitespace(text))
-    .filter(Boolean)
-    .map((text) => ({ text, kind: "paragraph" }));
-}
-
-function rawTextToBlocks(text: string): DocumentTextBlock[] {
-  return text
-    .split(/\n{1,}/)
-    .map((line) => normalizeWhitespace(line))
-    .filter(Boolean)
-    .map((line) => ({ text: line, kind: "paragraph" }));
-}
-
-function fallbackBlocks(fileName: string): DocumentTextBlock[] {
-  return [
-    {
-      text: stripExtension(fileName),
-      kind: "heading1"
-    },
-    {
-      text: "No extractable text was found in the source file.",
-      kind: "paragraph"
-    }
-  ];
-}
-
 function canvasToBlob(
   canvas: HTMLCanvasElement,
   mimeType: string,
@@ -757,10 +650,6 @@ function normalizeImageExtension(file: Blob | File) {
   }
 
   return "jpg";
-}
-
-function normalizeWhitespace(value: string) {
-  return value.replace(/\s+/g, " ").trim();
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
