@@ -1,8 +1,8 @@
 export type FileCategory = "pdf" | "docx" | "image" | "unknown";
 
-export type SupportedInputKind = "pdf" | "jpg" | "png" | "webp";
+export type SupportedInputKind = "pdf" | "docx" | "jpg" | "png" | "webp";
 
-type DeclaredInputKind = SupportedInputKind | "docx";
+type DeclaredInputKind = SupportedInputKind;
 
 export interface FileIdentity {
   name: string;
@@ -17,7 +17,7 @@ export interface SuccessfulFileSafetyResult {
   identity: FileIdentity;
   input: {
     kind: SupportedInputKind;
-    category: "pdf" | "image";
+    category: "pdf" | "docx" | "image";
     label: string;
   };
   limits: typeof BETA_FILE_SAFETY_LIMITS;

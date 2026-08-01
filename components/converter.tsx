@@ -38,6 +38,7 @@ type ConverterStatus = "idle" | "processing" | "completed" | "error";
 
 const FORMAT_OPTIONS: Array<{ value: ConversionTarget; label: string }> = [
   { value: "pdf", label: "PDF" },
+  { value: "docx", label: "DOCX" },
   { value: "jpg", label: "JPG" },
   { value: "png", label: "PNG" },
   { value: "webp", label: "WEBP" }

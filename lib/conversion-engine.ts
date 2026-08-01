@@ -29,6 +29,7 @@ export type ConversionTarget =
   | "png"
   | "webp"
   | "pdf"
+  | "docx"
   | "compressed-image"
   | "compressed-pdf";
 
@@ -74,6 +75,7 @@ const TARGETS: Record<ConversionTarget, TargetOption> = {
   png: { value: "png", label: "PNG images", extension: "png" },
   webp: { value: "webp", label: "WEBP image", extension: "webp" },
   pdf: { value: "pdf", label: "PDF document", extension: "pdf" },
+  docx: { value: "docx", label: "Word document", extension: "docx" },
   "compressed-image": {
     value: "compressed-image",
     label: "Compressed image",
@@ -111,9 +113,9 @@ export function getSupportedTargets(file: File): TargetOption[] {
 export function getSupportedTargetsForCategory(category: FileCategory): TargetOption[] {
   switch (category) {
     case "pdf":
-      return [TARGETS.pdf, TARGETS.jpg, TARGETS.png, TARGETS.webp];
+      return [TARGETS.docx, TARGETS.pdf, TARGETS.jpg, TARGETS.png, TARGETS.webp];
     case "docx":
-      return [];
+      return [TARGETS.pdf];
     case "image":
       return [TARGETS.pdf, TARGETS.jpg, TARGETS.png, TARGETS.webp];
     default:
@@ -224,6 +226,12 @@ export async function convertFile(
 
   try {
     const category = fileSafety.input.category;
+    if (
+  (category === "docx" && effectiveOptions.target === "pdf") ||
+  (category === "pdf" && effectiveOptions.target === "docx")
+) {
+  return [await convertDocumentWithCloudConvert(file, effectiveOptions)];
+}
 
     if (category === "pdf" && effectiveOptions.target === "pdf") {
       return [await compressPdf(file, effectiveOptions)];
@@ -712,7 +720,53 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
+async function convertDocumentWithCloudConvert(
+  file: File,
+  options: ConversionOptions
+): Promise<ConvertedAsset> {
+  emit(options, "converting", 20, "Uploading document...");
 
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("target", options.target);
+
+  const response = await fetch("/api/convert", {
+    method: "POST",
+    body: formData
+  });
+
+  if (!response.ok) {
+    let message = "Document conversion failed.";
+
+    try {
+      const result = (await response.json()) as { error?: string };
+      message = result.error ?? message;
+    } catch {
+      // Keep the default message.
+    }
+
+    throw new Error(message);
+  }
+
+  emit(options, "packaging", 90, "Preparing download...");
+
+  const blob = await response.blob();
+  const extension = options.target === "docx" ? "docx" : "pdf";
+  const mimeType =
+    options.target === "docx"
+      ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      : "application/pdf";
+
+  emit(options, "completed", 100, "Completed.");
+
+  return {
+    blob,
+    filename: `${stripExtension(file.name)}.${extension}`,
+    mimeType,
+    sourceName: file.name,
+    target: options.target
+  };
+}
 function emit(
   options: ConversionOptions,
   stage: ConversionStage,
