@@ -31,3 +31,4 @@ test-results/
 
 # OS files
 .DS_Store
+looma-conversion-benchmark/
