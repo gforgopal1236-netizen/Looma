@@ -88,6 +88,7 @@ export const BETA_FILE_SAFETY_LIMITS = {
 
 export const ACCEPTED_FILE_TYPES = {
   "application/pdf": [".pdf"],
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ['.docx'],
   "image/jpeg": [".jpg", ".jpeg"],
   "image/png": [".png"],
   "image/webp": [".webp"]

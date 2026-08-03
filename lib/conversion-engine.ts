@@ -720,6 +720,19 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
+
+function emit(
+  options: ConversionOptions,
+  stage: ConversionStage,
+  percent: number,
+  label: string
+) {
+  options.onProgress?.({
+    stage,
+    percent: clamp(percent, 0, 100),
+    label
+  });
+}
 async function convertDocumentWithCloudConvert(
   file: File,
   options: ConversionOptions
@@ -766,16 +779,4 @@ async function convertDocumentWithCloudConvert(
     sourceName: file.name,
     target: options.target
   };
-}
-function emit(
-  options: ConversionOptions,
-  stage: ConversionStage,
-  percent: number,
-  label: string
-) {
-  options.onProgress?.({
-    stage,
-    percent: clamp(percent, 0, 100),
-    label
-  });
 }
