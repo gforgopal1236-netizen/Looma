@@ -15,7 +15,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import {
-  GENERAL_METADATA_WARNING,
+  
   convertFile,
   formatBytes,
   getConversionWarnings,
@@ -288,14 +288,12 @@ export function Converter() {
     <Card className="w-full max-w-2xl border bg-card/95 shadow-soft backdrop-blur">
       <CardHeader className="space-y-2 p-6 text-center sm:p-8 sm:pb-5">
         <CardTitle className="text-2xl font-bold tracking-normal sm:text-3xl">
-          Private PDF & Image Converter
+          Looma File Converter 
         </CardTitle>
         <CardDescription className="mx-auto max-w-md text-sm">
-          Convert and compress PDF, JPG, PNG, and WEBP files locally in your browser.
+         Convert PDF, DOCX, JPG, PNG, and WEBP files quickly and securely. 
         </CardDescription>
-        <p className="mx-auto max-w-md text-xs text-muted-foreground">
-          {GENERAL_METADATA_WARNING}
-        </p>
+        
       </CardHeader>
 
       <CardContent className="space-y-6 p-5 pt-0 sm:p-8 sm:pt-0">
