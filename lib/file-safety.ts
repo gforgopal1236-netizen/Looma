@@ -182,12 +182,18 @@ export async function validateFileSafety(file: File): Promise<FileSafetyResult> 
   }
 
   if (declaredKind === "docx") {
-    return fail(
-      file,
-      FILE_SAFETY_ERROR_CODES.WORD_CONVERSION_UNAVAILABLE,
-      WORD_CONVERSION_PRIVATE_BETA_MESSAGE
-    );
-  }
+  return {
+    ok: true,
+    file,
+    identity,
+    input: {
+      kind: "docx",
+      category: "docx",
+      label: "DOCX"
+    },
+    limits: BETA_FILE_SAFETY_LIMITS
+  };
+}
 
   if (declaredKind === "pdf") {
     return fail(
